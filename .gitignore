@@ -1,0 +1,17 @@
+**/__pycache__/
+*json
+*txt
+data/hico_20160224_det
+data/swig_hoi
+ckpts/*
+
+output
+output129
+**/results/
+**/hfckpts/
+*bin
+*pt
+
+**/hfckpts
+**/.DS_Store
+**.pickle
