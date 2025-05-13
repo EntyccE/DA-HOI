@@ -4,6 +4,10 @@ This repo is the implementation of Diffusion Augmented HOI Detection model.
 
 From [resources](https://disk.pku.edu.cn/link/AABABC687131594023B769D406981B1016), you can download the best checkpoint and preprocessed masks and attention maps.
 
+Replace the dirs of HICO_VAL_ATTN, HICO_TRAIN_ATTN, HICO_VAL_MASK, HICO_TRAIN_MASK at `datasets/hico.py`.
+
+Need to download the Stable Diffusion v1-5 model and replace the SD_Config and SD_ckpt at `inference.sh` and `train.sh`.
+
 主结果表如下：
 
 **表 4.1** 不同方法在稀有类优先的零样本设定下的未知类、已知类别、全体类别与泛化损失的 mAP 对比。  
