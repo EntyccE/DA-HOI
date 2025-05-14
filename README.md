@@ -8,6 +8,8 @@ Replace the dirs of HICO_VAL_ATTN, HICO_TRAIN_ATTN, HICO_VAL_MASK, HICO_TRAIN_MA
 
 Need to download the Stable Diffusion v1-5 model and replace the SD_Config and SD_ckpt at `inference.sh` and `train.sh`.
 
+best checkpoint is from the resource links, shows the results in the table.
+
 主结果表如下：
 
 **表 4.1** 不同方法在稀有类优先的零样本设定下的未知类、已知类别、全体类别与泛化损失的 mAP 对比。  
