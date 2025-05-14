@@ -6,9 +6,9 @@ From [resources](https://disk.pku.edu.cn/link/AABABC687131594023B769D406981B1016
 
 Replace the dirs of HICO_VAL_ATTN, HICO_TRAIN_ATTN, HICO_VAL_MASK, HICO_TRAIN_MASK at `datasets/hico.py`.
 
-Need to download the Stable Diffusion v1-5 model and replace the SD_Config and SD_ckpt at `inference.sh` and `train.sh`.
+Need to download the Stable Diffusion v1-5 model and replace the SD_Config and SD_ckpt at `inference.sh` and `train.sh`. Download Stable Diffusion from [resources](https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/tree/main). Only need `v1-5-pruned-emaonly.ckpt` and `v1-inference.yaml`. Place them at `DA_HOI/StableDiffusion/`. Or customize the `SD_Config` and `SD_ckpt` environment variable in the shell file
 
-best checkpoint is from the resource links, shows the results in the table.
+Best checkpoint is from the resource links, shows the results in the table. Download best checkpoint and place it at `DA_HOI/`. To get the result, run `bash inference.sh`
 
 主结果表如下：
 

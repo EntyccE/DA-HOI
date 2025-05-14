@@ -1,9 +1,7 @@
-# export CUDA_VISIBLE_DEVICES="4,5,6,7"
-# export CUDA_VISIBLE_DEVICES="2,3,4,5"
-export CUDA_VISIBLE_DEVICES="6,7,8,9"
+export CUDA_VISIBLE_DEVICES="0,1,2,3"
 export HF_ENDPOINT="https://hf-mirror.com"
-export SD_Config="/home/zhanghaotian/data129/StableDiffusion/v1-inference.yaml"
-export SD_ckpt="/home/zhanghaotian/data129/StableDiffusion/v1-5-pruned-emaonly.ckpt"
+export SD_Config="./StableDiffusion/v1-inference.yaml"
+export SD_ckpt="./StableDiffusion/v1-5-pruned-emaonly.ckpt"
 
 mask_embedding_type=embedding
 upsample_factor=1.0

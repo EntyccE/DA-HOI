@@ -1,7 +1,7 @@
-export CUDA_VISIBLE_DEVICES="5,0"
+export CUDA_VISIBLE_DEVICES="0,1" # two gpu needed
 export HF_ENDPOINT="https://hf-mirror.com"
-export SD_Config="/home/zhanghaotian/data129/StableDiffusion/v1-inference.yaml"
-export SD_ckpt="/home/zhanghaotian/data129/StableDiffusion/v1-5-pruned-emaonly.ckpt"
+export SD_Config="./StableDiffusion/v1-inference.yaml"
+export SD_ckpt="./StableDiffusion/v1-5-pruned-emaonly.ckpt"
 
 mask_embedding_type=embedding
 upsample_factor=1.0
@@ -19,7 +19,7 @@ lr_drop=60
 
 python -m torch.distributed.launch --nproc_per_node=1 --master_port 3990 --use_env main.py \
     --batch_size 64 \
-    --output_dir output129/grad-newdiff-sched_${sched}-lr_drop_${lr_drop}-mlr_${min_lr}-newalter-${merge_mode}-${image_sd_resolution}-${diff_cross_attn}-prompt_${prefix_length}_${conjun_length}-layer_${vision_decoder_layers}_${dec_layers}-${mask_embedding_type}_up-${upsample_factor}-${mask_locate_type} \
+    --output_dir output \
     --epochs 80 \
     --lr 1e-4 --min-lr $min_lr --sched $sched --lr_drop $lr_drop \
     --hoi_token_length 25 \
@@ -40,4 +40,4 @@ python -m torch.distributed.launch --nproc_per_node=1 --master_port 3990 --use_e
     --mask_locate_type $mask_locate_type \
     --enable_focal_loss --description_file_path hico_hoi_descriptions.json \
     --eval \
-    --pretrained /home/zhanghaotian/MemHOI/best_checkpoint.pth
+    --pretrained best_checkpoint.pth

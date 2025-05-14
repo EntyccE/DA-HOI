@@ -23,14 +23,12 @@ HICO_TRAIN_ANNO = "./data/hico_20160224_det/annotations/trainval_hico_ann.json"
 HICO_VAL_ROOT = "./data/hico_20160224_det/images/test2015"
 HICO_VAL_ANNO = "./data/hico_20160224_det/annotations/test_hico_ann.json"
 
-HICO_TRAIN_ATTN = "/home/zhanghaotian/data129/attention_maps/train_merged_attention_maps.h5"
-HICO_VAL_ATTN = "/home/zhanghaotian/data129/attention_maps/test_attention_maps.h5"
+# place the path here
+HICO_TRAIN_ATTN = "TRAIN ATTENTION PATH"
+HICO_VAL_ATTN = "TEST ATTENTION PATH"
 
-# HICO_TRAIN_MASK = "/home/zhanghaotian/data129/hicodet_mask_not_complete/train2015_mask_full.h5"
-# HICO_VAL_MASK = "/home/zhanghaotian/data129/hicodet_mask_not_complete/test2015_mask.h5"
-
-HICO_TRAIN_MASK = "/home/zhanghaotian/data129/hicodet_mask/train2015_mask_full.h5"
-HICO_VAL_MASK = "/home/zhanghaotian/data129/hicodet_mask/test2015_mask.h5"
+HICO_TRAIN_MASK = "TRAIN MASK PATH"
+HICO_VAL_MASK = "TEST MASK PATH"
 
 class HICO(CocoDetection):
     def __init__(
