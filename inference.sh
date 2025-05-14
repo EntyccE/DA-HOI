@@ -40,4 +40,4 @@ python -m torch.distributed.launch --nproc_per_node=1 --master_port 3990 --use_e
     --mask_locate_type $mask_locate_type \
     --enable_focal_loss --description_file_path hico_hoi_descriptions.json \
     --eval \
-    --pretrained best_checkpoint.pth
+    --pretrained ./resources/best_checkpoint.pth
