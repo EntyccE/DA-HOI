@@ -10,6 +10,8 @@ Need to download the Stable Diffusion v1-5 model and replace the SD_Config and S
 
 Best checkpoint is from the resource links, shows the results in the table. Download best checkpoint and place it at `DA_HOI/`. To get the result, run `bash inference.sh`
 
+For dataset, follow instructions from `data/README.md`.
+
 主结果表如下：
 
 **表 4.1** 不同方法在稀有类优先的零样本设定下的未知类、已知类别、全体类别与泛化损失的 mAP 对比。  
