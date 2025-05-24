@@ -19,7 +19,7 @@ lr_drop=60
 
 python -m torch.distributed.launch --nproc_per_node=1 --master_port 3990 --use_env main.py \
     --batch_size 64 \
-    --output_dir output \
+    --output_dir output/checkpoint.pth \
     --epochs 80 \
     --lr 1e-4 --min-lr $min_lr --sched $sched --lr_drop $lr_drop \
     --hoi_token_length 25 \
