@@ -89,8 +89,7 @@ def main(args):
         noun_list_val = dataset_val.all_nouns
         print('# val:', len(dataset_val))
     else:
-        # dataset_train = build_dataset(image_set='train', args=args)
-        dataset_train = build_dataset(image_set='val', args=args)
+        dataset_train = build_dataset(image_set='train', args=args)
         noun_list_train = dataset_train.all_nouns
         print('# train:', len(dataset_train))
 
@@ -134,7 +133,6 @@ def main(args):
         if args.distributed:
             model = model.module
         test_stats, evaluator = evaluate(model, extractor, postprocessors, criterion, data_loader_val, noun_list_val, device, args)
-
         if args.output_dir:
             evaluator.save(args.output_dir)
         return

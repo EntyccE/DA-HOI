@@ -54,8 +54,6 @@ class HOIResidualAttentionBlock(nn.Module):
         self.two_feat = two_feat
         if self.two_feat:
             self.hoi_cross_attn_d = nn.MultiheadAttention(d_model, n_head, dropout=0.1)
-            self.hoi_ln_d = LayerNorm(d_model)
-            self.dropout_d = nn.Dropout(0.1)
         # self.attn = nn.MultiheadAttention(d_model, n_head)
 
         self.ln_1 = LayerNorm(d_model)
@@ -70,10 +68,14 @@ class HOIResidualAttentionBlock(nn.Module):
         self.hoi_ln1 = LayerNorm(d_model)
         self.hoi_ln2 = LayerNorm(d_model)
         self.hoi_ln3 = LayerNorm(d_model)
+        if self.two_feat:
+            self.hoi_ln_d = LayerNorm(d_model)
 
         self.dropout1 = nn.Dropout(0.1)
         self.dropout2 = nn.Dropout(0.1)
         self.dropout3 = nn.Dropout(0.1)
+        if self.two_feat:
+            self.dropout_d = nn.Dropout(0.1)
 
     def forward(self, image: torch.Tensor, hoi: torch.Tensor, feature: torch.Tensor = None, mask: torch.Tensor = None, prompt_hint: torch.Tensor = torch.zeros(0,768)):
         # Self-attention block
@@ -105,43 +107,53 @@ class HOIResidualAttentionBlock(nn.Module):
     
 
 class HOITransformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor=None):
+    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor=None, use_mask=True, use_map=True):
         super().__init__()
         self.width = width
         self.layers = layers
-        self.resblocks = nn.Sequential(*[HOIResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers+2)])
-        self.mask_mlp = nn.Sequential(OrderedDict([
-            ("mask_fc1", nn.Linear(width, width)),
-            ("mask_gelu", QuickGELU()),
-            ("mask_fc2", nn.Linear(width, width))
-        ]))
-        self.mask_ln = LayerNorm(width)
-        self.attn_mlp = nn.Sequential(OrderedDict([
-            ("attn_fc1", nn.Linear(width, width)),
-            ("attn_gelu", QuickGELU()),
-            ("attn_fc2", nn.Linear(width, width))
-        ]))
-        self.attn_ln = LayerNorm(width)
-
-        self.initialize_parameters()
+        self.use_mask = use_mask
+        self.use_map = use_map
+        self.resblocks = nn.Sequential(*[HOIResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
+        
+        if self.use_mask:
+            self.mask_mlp = nn.Sequential(OrderedDict([
+                ("mask_fc1", nn.Linear(width, width)),
+                ("mask_gelu", QuickGELU()),
+                ("mask_fc2", nn.Linear(width, width))
+            ]))
+            self.mask_ln = LayerNorm(width)
+        if self.use_map:
+            self.attn_mlp = nn.Sequential(OrderedDict([
+                ("attn_fc1", nn.Linear(width, width)),
+                ("attn_gelu", QuickGELU()),
+                ("attn_fc2", nn.Linear(width, width))
+            ]))
+            self.attn_ln = LayerNorm(width)
+            self.initialize_parameters()
 
     def initialize_parameters(self):
         for layer in self.mask_mlp + self.attn_mlp:
             if isinstance(layer, nn.Linear):
-                nn.init.xavier_normal_(layer.weight)
+                nn.init.zeros_(layer.weight)
                 nn.init.constant_(layer.bias, 0)
 
     def forward(self, image: torch.Tensor, df: torch.Tensor, mf: torch.Tensor, attn_image: torch.Tensor, hoi: torch.Tensor, mask: torch.Tensor = None, prompt_hint: torch.Tensor = torch.zeros(0,768)):
         for layer_i, resblock in enumerate(self.resblocks[:2]):
             image, df, hoi, attn_map, attn_map2 = resblock(image, hoi, df, mask, prompt_hint)
 
-        mf, tmp, hoi2, attn_map, attn_map2 = self.resblocks[-2](image, hoi, attn_image, mask, prompt_hint)
-        image, df, hoi, attn_map, attn_map2 = self.resblocks[-4](image, hoi, df, mask, prompt_hint)
-        hoi = hoi + self.mask_mlp(hoi2)
+        image, df, hoi_t, attn_map, attn_map2 = self.resblocks[2](image, hoi, df, mask, prompt_hint)
+        if self.use_mask:
+            _, mf, hoi2, attn_map, attn_map2 = self.resblocks[-2](image, hoi, mf, mask, prompt_hint)
+            hoi = hoi_t + self.mask_mlp(hoi2)
+        else:
+            hoi = hoi_t
 
-        attn_image, tmp, hoi1, attn_map, attn_map2 = self.resblocks[-1](image, hoi, attn_image, mask, prompt_hint)
-        image, df, hoi, attn_map, attn_map2 = self.resblocks[-3](image, hoi, df, mask, prompt_hint)
-        hoi = hoi + self.attn_mlp(hoi1)
+        image, df, hoi_t, attn_map, attn_map2 = self.resblocks[3](image, hoi, df, mask, prompt_hint)
+        if self.use_map:
+            _, attn_image, hoi1, attn_map, attn_map2 = self.resblocks[-1](image, hoi, attn_image, mask, prompt_hint)
+            hoi = hoi_t + self.attn_mlp(hoi1)
+        else:
+            hoi = hoi_t
 
         return image, hoi, attn_map
 
@@ -166,7 +178,9 @@ class HOIVisionTransformer(nn.Module):
         enable_dec: bool = False,
         dec_heads: int = 8,
         dec_layers: int = 6,
-        merge_mode: str = "add"
+        merge_mode: str = "add",
+        use_mask: bool = True,
+        use_map: bool = True,
     ):
         super().__init__()
         self.image_resolution = image_resolution
@@ -182,7 +196,7 @@ class HOIVisionTransformer(nn.Module):
         self.proj = nn.Parameter(scale * torch.randn(width, output_dim))
 
         # Modified Transformer blocks
-        self.transformer = HOITransformer(width, layers, heads, hoi_parser_attn_mask)
+        self.transformer = HOITransformer(width, layers, heads, hoi_parser_attn_mask, use_mask, use_map)
 
         # Additional parameters for HOI detection
         self.hoi_token_embed = nn.Parameter(scale * torch.randn(hoi_token_length, width)) # 25, 768
@@ -215,12 +229,15 @@ class HOIVisionTransformer(nn.Module):
         self.df_ln = LayerNorm(width)
 
         self.merge_mode = merge_mode
+        self.use_mask = use_mask
+        self.use_map = use_map
         if merge_mode == "add":
             # used for gated fusion
             self.mf_mlp2 = nn.Sequential(OrderedDict([
                 ("mf2_fc1", nn.Linear(width, width))
             ]))
             self.mf_ln2 = LayerNorm(width)
+        self.initialize_parameters()
 
     def initialize_parameters(self):
         nn.init.xavier_uniform_(self.bbox_score.weight, gain=1)
@@ -278,12 +295,15 @@ class HOIVisionTransformer(nn.Module):
         hoi = self.ln_pre(hoi)
         hoi = hoi.permute(1, 0, 2)  # NLD -> LND (25, bs, 768)
         image = image.permute(1, 0, 2)  # [grid ** 2, bs, width]
-        mf = mf.permute(1, 0, 2)
         df = df.permute(1, 0, 2)
-        mattn_m = mattn_m.permute(1, 0, 2)
 
         image = image + self.hoi_mlp(self.hoi_ln(image))
         df = df + self.df_mlp(self.df_ln(df))
+
+        if self.use_mask:
+            mf = mf.permute(1, 0, 2)
+        if self.use_map:
+            mattn_m = mattn_m.permute(1, 0, 2)
 
         if self.merge_mode == "alter":
             image, hoi, attn_map = self.transformer(image, df, mf, mattn_m, hoi, mask=None, prompt_hint=prompt_hint)
@@ -375,7 +395,7 @@ class MyStableDiffusion(nn.Module):
             xc = self.cond_stage_model(c)
         return xc
 
-    def extract_sd_feature(self, resized_img, condition, ori_device, batch_size=32):
+    def extract_sd_feature(self, resized_img, condition, ori_device, batch_size=8):
         resized_img = resized_img.to(self.device)
         condition = condition.to(self.device)
         
@@ -455,13 +475,14 @@ class HOIDetector(nn.Module):
         auxiliary_prefix_length: int = 4,
         use_prompt_hint: bool = False,
         merge_mode: str = "add",
+        use_mask: bool = True,
+        use_map: bool = True,
         # hyper params
         dataset_file: str = "",
         eval : bool = False,
         device: str = "cuda",
     ):
         super().__init__()
-
         self.context_length = context_length
         self.hoi_token_length = hoi_token_length
         self.prompt_hint_length = 0
@@ -485,20 +506,6 @@ class HOIDetector(nn.Module):
             ("vision_proj_fc2", nn.Linear(vision_width, vision_width)),
             ("vision_proj_dropout2", nn.Dropout(0.2)),
         ]))
-        self.mask_proj = nn.Sequential(OrderedDict([
-            ("mask_proj_fc1", nn.Linear(512, max(vision_width, 512))),
-            ("mask_proj_gelu1", QuickGELU()),
-            ("mask_proj_dropout1", nn.Dropout(0.2)),
-            ("mask_proj_fc2", nn.Linear(max(vision_width, 512), vision_width)),
-            ("mask_proj_dropout2", nn.Dropout(0.2)),
-        ]))
-        self.attn_proj = nn.Sequential(OrderedDict([
-            ("attn_proj_fc1", nn.Linear(vision_width, vision_width)),
-            ("attn_proj_gelu1", QuickGELU()),
-            ("attn_proj_dropout1", nn.Dropout(0.2)),
-            ("attn_proj_fc2", nn.Linear(vision_width, vision_width)),
-            ("attn_proj_dropout2", nn.Dropout(0.2)),
-        ]))
         self.diff_proj = nn.Sequential(OrderedDict([
             ("diff_proj_fc1", nn.Linear(1280, max(vision_width, 1280))),
             ("diff_proj_gelu1", QuickGELU()),
@@ -506,7 +513,24 @@ class HOIDetector(nn.Module):
             ("diff_proj_fc2", nn.Linear(max(vision_width, 1280), vision_width)),
             ("diff_proj_dropout2", nn.Dropout(0.2)),
         ]))
-        # TODO change merge architecture
+
+        if use_mask:
+            self.mask_proj = nn.Sequential(OrderedDict([
+                ("mask_proj_fc1", nn.Linear(512, max(vision_width, 512))),
+                ("mask_proj_gelu1", QuickGELU()),
+                ("mask_proj_dropout1", nn.Dropout(0.2)),
+                ("mask_proj_fc2", nn.Linear(max(vision_width, 512), vision_width)),
+                ("mask_proj_dropout2", nn.Dropout(0.2)),
+            ]))
+        if use_map:
+            self.attn_proj = nn.Sequential(OrderedDict([
+                ("attn_proj_fc1", nn.Linear(vision_width, vision_width)),
+                ("attn_proj_gelu1", QuickGELU()),
+                ("attn_proj_dropout1", nn.Dropout(0.2)),
+                ("attn_proj_fc2", nn.Linear(vision_width, vision_width)),
+                ("attn_proj_dropout2", nn.Dropout(0.2)),
+            ]))
+
         self.gate_weight = torch.nn.Parameter(torch.as_tensor(0.0))
         # self.vision_mlp = nn.Parameter((vision_width ** -0.5) * torch.randn(vision_width, vision_width))
         self.multi_scale = multi_scale
@@ -529,7 +553,9 @@ class HOIDetector(nn.Module):
             enable_dec=enable_dec,
             dec_heads=dec_heads,
             dec_layers=dec_layers,
-            merge_mode=merge_mode
+            merge_mode=merge_mode,
+            use_mask=use_mask,
+            use_map=use_map
         )
 
         # Text
@@ -562,6 +588,8 @@ class HOIDetector(nn.Module):
             ("proj_fc2", nn.Linear(vision_width, vision_width))
         ]))
         self.use_prompt_hint = use_prompt_hint
+        self.use_mask = use_mask
+        self.use_map = use_map
 
         self.mask_embedding_type = mask_embedding_type
         self.mask_locate_type = mask_locate_type
@@ -569,7 +597,7 @@ class HOIDetector(nn.Module):
         self.upsample_method = upsample_method
         self.downsample_method = downsample_method
         self.merge_mode = merge_mode
-        
+
         self.initialize_parameters()
 
     def initialize_parameters(self):
@@ -596,13 +624,6 @@ class HOIDetector(nn.Module):
         # nn.init.xavier_normal_(self.promp_proj.proj_fc2.weight)
         nn.init.normal_(self.vision_proj.vision_proj_fc1.weight, std=0.01)
         nn.init.normal_(self.vision_proj.vision_proj_fc2.weight, std=0.01)
-        # nn.init.normal_(self.mask_proj.mask_proj_fc1.weight, std=0.01)
-        # nn.init.normal_(self.mask_proj.mask_proj_fc2.weight, std=0.01)
-
-        for layer in self.attn_proj + self.mask_proj:
-            if isinstance(layer, nn.Linear):
-                nn.init.xavier_normal_(layer.weight)
-                nn.init.constant_(layer.bias, 0)
 
     def build_attention_mask(self):
         # lazily create causal attention mask, with full attention between the vision tokens
@@ -933,7 +954,7 @@ class HOIDetector(nn.Module):
             prompt_hint = self.promp_proj(prompt_hint)
         else:
             prompt_hint = torch.zeros(0, self.vision_width).to(image.device)
-        
+
         bs, c, h, w = image.shape
         if self.clip_preprocess:
             resized_img = [torchvision.transforms.Resize([self.input_resolution,self.input_resolution])(image[i][:, :img_sizes[i,0], :img_sizes[i,1]]) for i in range(bs)]
@@ -1012,25 +1033,31 @@ class HOIDetector(nn.Module):
 
             downsampled_mask_embeddings = self.get_embedded_mask(resized_mask, all_noun_embeddings, (size, size), mask_info=mask_info)
             df = self.diff_proj(diffuse_feat)
-            mask_maps = self.mask_proj(downsampled_mask_embeddings)
             feature_maps = self.vision_proj(upsampled_feature_maps) # torch.Size([bs, 196, 768]) # MLP, 768 -> 768
+            if self.use_mask:
+                mask_maps = self.mask_proj(downsampled_mask_embeddings)
+            else:
+                mask_maps = None
+            if self.use_map:
+                i_size = int(math.sqrt(feature_maps.shape[1]))
+                mattn_m = F.interpolate(resized_mattn, size=(i_size, i_size), mode='bilinear', align_corners=False).view(bs, 1, -1).permute(0, 2, 1)
+                nan_per_image = torch.isnan(mattn_m).any(dim=0).squeeze(-1)
+                if nan_per_image.any():
+                    mattn_m[:, nan_per_image, :] = 1.0
 
-            i_size = int(math.sqrt(feature_maps.shape[1]))
-            mattn_m = F.interpolate(resized_mattn, size=(i_size, i_size), mode='bilinear', align_corners=False).view(bs, 1, -1).permute(0, 2, 1)
-            nan_per_image = torch.isnan(mattn_m).any(dim=0).squeeze(-1)
-            if nan_per_image.any():
-                mattn_m[:, nan_per_image, :] = 1.0
-
-            attn_image = feature_maps * mattn_m
-            mattn_m = self.attn_proj(attn_image)
+                attn_image = feature_maps * mattn_m
+                mattn_m = self.attn_proj(attn_image)
+            else:
+                mattn_m = None
+            
             vision_outputs = self.hoi_visual_decoder(image=feature_maps, df=df, mf=mask_maps, mattn_m=mattn_m, mask=decoder_mask, prompt_hint=prompt_hint) # decoder
 
         # text encoder
         text_features = self.encode_text(text)
-        # if self.use_aux_text:
-        #     auxiliary_text_features = self.encode_text(auxiliary_texts, is_auxiliary_text=True)
-        #     auxiliary_text_features = auxiliary_text_features / auxiliary_text_features.norm(dim=-1, keepdim=True)
-        #     auxiliary_logit_scale = self.auxiliary_logit_scale.exp()
+        if self.use_aux_text:
+            auxiliary_text_features = self.encode_text(auxiliary_texts, is_auxiliary_text=True)
+            auxiliary_text_features = auxiliary_text_features / auxiliary_text_features.norm(dim=-1, keepdim=True)
+            auxiliary_logit_scale = self.auxiliary_logit_scale.exp()
 
         hoi_features = vision_outputs["hoi_features"]
         hoi_features = hoi_features / hoi_features.norm(dim=-1, keepdim=True)
@@ -1038,8 +1065,8 @@ class HOIDetector(nn.Module):
 
         logit_scale = self.logit_scale.exp()
         logits_per_hoi = logit_scale * hoi_features @ text_features.t() 
-        # if self.use_aux_text:
-        #     logits_per_hoi = logits_per_hoi + auxiliary_logit_scale * hoi_features @ auxiliary_text_features.t()
+        if self.use_aux_text:
+            logits_per_hoi = logits_per_hoi + auxiliary_logit_scale * hoi_features @ auxiliary_text_features.t()
 
         return_dict = {
             "logits_per_hoi": logits_per_hoi,
@@ -1193,6 +1220,8 @@ def build_model(args):
         auxiliary_prefix_length=args.auxiliary_prefix_length,
         use_prompt_hint=args.use_prompt_hint,
         merge_mode=args.merge_mode,
+        use_mask=args.use_mask,
+        use_map=args.use_map,
         # hyper params
         dataset_file=args.dataset_file,
         eval=args.eval,
@@ -1209,7 +1238,7 @@ def build_model(args):
 
     if args.pretrained:
         checkpoint = torch.load(args.pretrained, map_location='cpu')
-        model.load_state_dict(checkpoint["model"], strict=True)
+        model.load_state_dict(checkpoint["model"], strict=False)
 
     # Build matcher and criterion
     matcher = build_matcher(args)

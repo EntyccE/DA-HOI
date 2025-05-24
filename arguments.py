@@ -57,6 +57,8 @@ def get_args_parser():
                     help='downsample method used for mask feature')
     parser.add_argument('--diff_cross_attn', default='none', type=str, choices=["none", "caption"],
                 help='cross attn used in diffusion')
+    parser.add_argument('--use_mask', default=False, type=lambda x: (str(x).lower() == 'true'), help="use mask in input or not")
+    parser.add_argument('--use_map', default=False, type=lambda x: (str(x).lower() == 'true'), help="use map in input or not")
     parser.add_argument('--merge_mode', default='none', type=str, choices=["alter", "add"],
                 help='cross attn used in diffusion')
     

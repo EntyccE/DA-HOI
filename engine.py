@@ -31,12 +31,12 @@ def train_one_epoch(model: torch.nn.Module, extractor: torch.nn.Module, criterio
 
     all_noun_embeddings = model.module.calculate_all_embeddings(noun_list, device=device)
     # all_noun_embeddings = None
-    # hoi_descriptions = get_hoi_descriptions(dataset_name=args.dataset_file, description_file_path=args.description_file_path)
-    hoi_descriptions = None
-    for images, semantic_masks, mattn_maps, targets_ in metric_logger.log_every(data_loader, 10, header):
+    hoi_descriptions = get_hoi_descriptions(dataset_name=args.dataset_file, description_file_path=args.description_file_path)
+    
+    for images, semantic_masks, mattn_maps, targets_ in metric_logger.log_every(data_loader, print_freq, header):
         images, semantic_masks, mattn_maps, targets, mask_info, caption_list, texts, auxiliary_texts = prepare_inputs(images, semantic_masks, mattn_maps, targets_, data_loader, device, hoi_descriptions)
         if args.consider_all:
-            texts, auxiliary_texts = prepare_text_inputs(model, data_loader.dataset.dataset_texts, device, None)
+            texts, auxiliary_texts = prepare_text_inputs(model, data_loader.dataset.dataset_texts, device, hoi_descriptions)
         # images.tensors:torch.Size([8, 3, 320, 480]); images.mask: torch.Size([8, 320, 480])
         img_sizes = torch.stack([targets[z]['size'] for z in range(len(targets))], dim=0)
 
@@ -60,6 +60,7 @@ def train_one_epoch(model: torch.nn.Module, extractor: torch.nn.Module, criterio
 
         optimizer.zero_grad()
         losses.backward()
+
         if args.clip_max_norm > 0:
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip_max_norm)
         optimizer.step()
@@ -104,21 +105,20 @@ def evaluate(model: HOIDetector, extractor, postprocessors, criterion, data_load
 
     text_features = model.encode_text(text_tokens, pure_words=False) # (600, 512)
     text_features /= text_features.norm(dim=-1, keepdim=True) 
-    # if args.use_aux_text:
-    #     auxiliary_text_features = model.encode_text(auxiliary_texts, is_auxiliary_text=True)
-    #     auxiliary_text_features /= auxiliary_text_features.norm(dim=-1, keepdim=True)
-    # if args.use_prompt_hint:
-    #     prompt_hint = model.encode_text(text_tokens, pure_words=True)
-    #     prompt_hint = model.promp_proj(prompt_hint)
-    # else:
-    prompt_hint = torch.zeros(0, args.vision_width).half().to(device)
+    if args.use_aux_text:
+        auxiliary_text_features = model.encode_text(auxiliary_texts, is_auxiliary_text=True)
+        auxiliary_text_features /= auxiliary_text_features.norm(dim=-1, keepdim=True)
+    if args.use_prompt_hint:
+        prompt_hint = model.encode_text(text_tokens, pure_words=True)
+        prompt_hint = model.promp_proj(prompt_hint)
+    else:
+        prompt_hint = torch.zeros(0, args.vision_width).half().to(device)
     
     # Inference
     for images, semantic_masks, mattn_maps, targets_ in metric_logger.log_every(data_loader, 10, header):
         images = images.to(device)
         semantic_masks = semantic_masks.to(device)
         mattn_maps = mattn_maps.to(device)
-
         targets = [{k: v.to(device) if (k != "hois" and k != "filename" and k != "mask_logits" and k != "noun_mapping" and k != "caption") else v for k, v in t.items()} for t in targets_]
         mask_info = [{k: v for k, v in t.items() if k == "noun_mapping" or k == "mask_logits"} for t in targets_]
         caption_list = [t["caption"] for t in targets_]
@@ -190,17 +190,22 @@ def evaluate(model: HOIDetector, extractor, postprocessors, criterion, data_load
             downsampled_mask_embeddings = model.get_embedded_mask(resized_mask, all_noun_embeddings, (size, size), mask_info=mask_info)
             # new_feature = torch.cat([upsampled_feature_maps, downsampled_mask_embeddings], dim=-1)
             df = model.diff_proj(diffuse_feat)
-            mask_maps = model.mask_proj(downsampled_mask_embeddings)
             feature_maps = model.vision_proj(upsampled_feature_maps) # torch.Size([bs, 196, 768]) # MLP, 768 -> 768
-            i_size = int(math.sqrt(feature_maps.shape[1]))
-            mattn_m = F.interpolate(resized_mattn, size=(i_size, i_size), mode='bilinear', align_corners=False).view(bs, 1, -1).permute(0, 2, 1)
-            nan_per_image = torch.isnan(mattn_m).any(dim=0).squeeze(-1)
-            if nan_per_image.any():
-                mattn_m[:, nan_per_image, :] = 1.0
+            if args.use_mask:
+                mask_maps = model.mask_proj(downsampled_mask_embeddings)
+            else:
+                mask_maps = None
+            if args.use_map:
+                i_size = int(math.sqrt(feature_maps.shape[1]))
+                mattn_m = F.interpolate(resized_mattn, size=(i_size, i_size), mode='bilinear', align_corners=False).view(bs, 1, -1).permute(0, 2, 1)
+                nan_per_image = torch.isnan(mattn_m).any(dim=0).squeeze(-1)
+                if nan_per_image.any():
+                    mattn_m[:, nan_per_image, :] = 1.0
 
-            attn_image = feature_maps * mattn_m
-            mattn_m = model.attn_proj(attn_image)
-
+                attn_image = feature_maps * mattn_m
+                mattn_m = model.attn_proj(attn_image)
+            else:
+                mattn_m = None
             vision_outputs = model.hoi_visual_decoder(image=feature_maps, df=df, mf=mask_maps, mattn_m=mattn_m, mask=decoder_mask, prompt_hint=prompt_hint) # decoder
 
         # vision_outputs (dict): 'hoi_features' (512), 'pred_boxes' (8), 'box_scores' (1), 'attn_maps (196)'
@@ -300,10 +305,10 @@ def prepare_inputs(images, masks, mattn, targets_, data_loader, device, hoi_desc
             
             hoi_name = " ".join(hoi["text"])
             # cur_hoi_description = random.sample(hoi_descriptions[hoi_name], len(hoi_descriptions[hoi_name]))
-            # cur_hoi_description = " ".join(hoi_descriptions[hoi_name])
-            # cur_hoi_description_token = _tokenizer.encode(cur_hoi_description)
-            # cur_hoi_description_token = torch.as_tensor([sot_token] + cur_hoi_description_token + [eot_token], dtype=torch.long).to(device)
-            # auxiliary_texts.append(cur_hoi_description_token)
+            cur_hoi_description = " ".join(hoi_descriptions[hoi_name])
+            cur_hoi_description_token = _tokenizer.encode(cur_hoi_description)
+            cur_hoi_description_token = torch.as_tensor([sot_token] + cur_hoi_description_token + [eot_token], dtype=torch.long).to(device)
+            auxiliary_texts.append(cur_hoi_description_token)
 
             ## <action, object>
             action_token = _tokenizer.encode(action_text.replace("_", " "))
@@ -360,10 +365,10 @@ def prepare_inputs(images, masks, mattn, targets_, data_loader, device, hoi_desc
                     related_text_inputs.append(action_text + " " + object_text)
                     ## hoi descriptions
                     hoi_name = " ".join([action_text, object_text])
-                    # cur_hoi_description = " ".join(hoi_descriptions[hoi_name])
-                    # cur_hoi_description_token = _tokenizer.encode(cur_hoi_description)
-                    # cur_hoi_description_token = torch.as_tensor([sot_token] + cur_hoi_description_token + [eot_token], dtype=torch.long).to(device)
-                    # related_auxiliary_texts.append(cur_hoi_description_token)
+                    cur_hoi_description = " ".join(hoi_descriptions[hoi_name])
+                    cur_hoi_description_token = _tokenizer.encode(cur_hoi_description)
+                    cur_hoi_description_token = torch.as_tensor([sot_token] + cur_hoi_description_token + [eot_token], dtype=torch.long).to(device)
+                    related_auxiliary_texts.append(cur_hoi_description_token)
 
                 related_hois = object_to_related_hois[query_object_text]
                 for hoi in related_hois:
@@ -384,10 +389,10 @@ def prepare_inputs(images, masks, mattn, targets_, data_loader, device, hoi_desc
                     related_text_inputs.append(action_text + " " + object_text)
                     ## hoi descriptions
                     hoi_name = " ".join([action_text, object_text])
-                    # cur_hoi_description = " ".join(hoi_descriptions[hoi_name])
-                    # cur_hoi_description_token = _tokenizer.encode(cur_hoi_description)
-                    # cur_hoi_description_token = torch.as_tensor([sot_token] + cur_hoi_description_token + [eot_token], dtype=torch.long).to(device)
-                    # auxiliary_texts.append(cur_hoi_description_token)
+                    cur_hoi_description = " ".join(hoi_descriptions[hoi_name])
+                    cur_hoi_description_token = _tokenizer.encode(cur_hoi_description)
+                    cur_hoi_description_token = torch.as_tensor([sot_token] + cur_hoi_description_token + [eot_token], dtype=torch.long).to(device)
+                    auxiliary_texts.append(cur_hoi_description_token)
         texts.extend(related_texts)
         auxiliary_texts.extend(related_auxiliary_texts)
 
@@ -395,7 +400,7 @@ def prepare_inputs(images, masks, mattn, targets_, data_loader, device, hoi_desc
 
 
 @torch.no_grad()
-def prepare_text_inputs(model, texts, device, hoi_descriptions=None):
+def prepare_text_inputs(model, texts, device, hoi_descriptions):
     sot_token = _tokenizer.encoder["<|startoftext|>"]
     eot_token = _tokenizer.encoder["<|endoftext|>"]
 
@@ -403,11 +408,11 @@ def prepare_text_inputs(model, texts, device, hoi_descriptions=None):
     auxiliary_texts = []
     for action_text, object_text in texts:
         hoi_name = " ".join([action_text.replace(" ", "_"), object_text])
-        # # cur_hoi_description = random.sample(hoi_descriptions[hoi_name], len(hoi_descriptions[hoi_name]))
-        # cur_hoi_description = " ".join(hoi_descriptions[hoi_name])
-        # cur_hoi_description_token = _tokenizer.encode(cur_hoi_description)
-        # cur_hoi_description_token = torch.as_tensor([sot_token] + cur_hoi_description_token + [eot_token], dtype=torch.long).to(device)
-        # auxiliary_texts.append(cur_hoi_description_token)
+        # cur_hoi_description = random.sample(hoi_descriptions[hoi_name], len(hoi_descriptions[hoi_name]))
+        cur_hoi_description = " ".join(hoi_descriptions[hoi_name])
+        cur_hoi_description_token = _tokenizer.encode(cur_hoi_description)
+        cur_hoi_description_token = torch.as_tensor([sot_token] + cur_hoi_description_token + [eot_token], dtype=torch.long).to(device)
+        auxiliary_texts.append(cur_hoi_description_token)
 
         ## <action, object>
         action_token = _tokenizer.encode(action_text.replace("_", " "))
