@@ -12,9 +12,8 @@ For dataset, follow instructions from `data/README.md`.
 
 Main result table can be found below:
 
-不同方法在稀有类优先的零样本设定下的未知类、已知类别、全体类别与泛化损失的 mAP 对比。  
-泛化损失是已知类别与未知类别之间的 mAP 差值。
 Comparison of Different Methods on HICO-DET Unseen classes, Seen classes, and All classes in Rare-First zero-shot setting.
+
 GL: Generalization Loss, the differences between Seen classes mAP and Unseen classes mAP.
 
 | Method         | Pretrained Detector | Unseen (%) | Seen (%) | All (%) | GL ↓(%) |
